@@ -35,7 +35,7 @@ constexpr wchar_t kPopupClass[] = L"ClipNest.QuickWindow";
 constexpr wchar_t kSettingsClass[] = L"ClipNest.SettingsWindow";
 constexpr wchar_t kInfoClass[] = L"ClipNest.InfoWindow";
 constexpr wchar_t kProductName[] = L"ClipNest";
-constexpr wchar_t kProductVersion[] = L"1.0.0";
+constexpr wchar_t kProductVersion[] = L"1.0.1";
 constexpr float kTitleBarHeight = 44.0f;
 constexpr float kCloseButtonWidth = 36.0f;
 
@@ -2554,6 +2554,7 @@ LRESULT CALLBACK PopupProc(HWND window, UINT message, WPARAM wParam, LPARAM lPar
             }
         }
         return 0;
+    case WM_SYSKEYDOWN:
     case WM_KEYDOWN: {
         if (wParam == VK_ESCAPE) {
             HideQuickPanel();
@@ -2562,16 +2563,28 @@ LRESULT CALLBACK PopupProc(HWND window, UINT message, WPARAM wParam, LPARAM lPar
         const PopupLayout layout = GetPopupLayout(window);
         if (wParam >= '1' && wParam <= '9') {
             const std::size_t index = static_cast<std::size_t>(wParam - '1');
-            if (index < g_store.History().size()) UseEntry(1, index, true);
+            if (index < g_store.History().size()) {
+                UseEntry(1, index, true);
+            } else {
+                HideQuickPanel();
+            }
             return 0;
         }
         if (wParam == '0') {
-            if (g_store.History().size() > 9) UseEntry(1, 9, true);
+            if (g_store.History().size() > 9) {
+                UseEntry(1, 9, true);
+            } else {
+                HideQuickPanel();
+            }
             return 0;
         }
         if (wParam >= 'A' && wParam <= 'Z') {
             const std::size_t index = 10 + static_cast<std::size_t>(wParam - 'A');
-            if (index < g_store.History().size()) UseEntry(1, index, true);
+            if (index < g_store.History().size()) {
+                UseEntry(1, index, true);
+            } else {
+                HideQuickPanel();
+            }
             return 0;
         }
         const auto& entries = g_popupSection == 0 ? g_store.Favorites() : g_store.History();
@@ -2599,8 +2612,18 @@ LRESULT CALLBACK PopupProc(HWND window, UINT message, WPARAM wParam, LPARAM lPar
                        g_popupIndex + static_cast<std::size_t>(layout.rows) < g_store.History().size()) {
                 g_popupIndex += static_cast<std::size_t>(layout.rows);
             }
-        } else if (wParam == VK_RETURN && !entries.empty()) {
-            UseEntry(g_popupSection, g_popupIndex, (GetKeyState(VK_CONTROL) & 0x8000) == 0);
+        } else if (wParam == VK_RETURN) {
+            if (!entries.empty()) {
+                UseEntry(g_popupSection, g_popupIndex,
+                         (GetKeyState(VK_CONTROL) & 0x8000) == 0);
+            } else {
+                HideQuickPanel();
+            }
+            return 0;
+        } else if (wParam == VK_CONTROL || wParam == VK_LCONTROL || wParam == VK_RCONTROL) {
+            return 0;
+        } else {
+            HideQuickPanel();
             return 0;
         }
         if (g_popupSection == 0 && g_popupIndex < g_favoriteScroll) g_favoriteScroll = g_popupIndex;

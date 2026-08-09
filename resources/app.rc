@@ -3,8 +3,8 @@
 IDI_APP_ICON ICON "app.ico"
 
 1 VERSIONINFO
- FILEVERSION 1,0,0,0
- PRODUCTVERSION 1,0,0,0
+ FILEVERSION 1,0,1,0
+ PRODUCTVERSION 1,0,1,0
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -21,11 +21,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "ClipNest"
             VALUE "FileDescription", "ClipNest"
-            VALUE "FileVersion", "1.0.0"
+            VALUE "FileVersion", "1.0.1"
             VALUE "InternalName", "ClipNest"
             VALUE "OriginalFilename", "ClipNest.exe"
             VALUE "ProductName", "ClipNest"
-            VALUE "ProductVersion", "1.0.0"
+            VALUE "ProductVersion", "1.0.1"
         END
     END
     BLOCK "VarFileInfo"
