@@ -1,0 +1,13 @@
+/.vs/
+/ClipboardTool/
+/x64/
+/dist/
+/artifacts/
+*.obj
+*.pdb
+*.user
+*.suo
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
