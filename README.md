@@ -17,6 +17,25 @@ ClipNest 是一个面向 Windows 10/11 的轻量原生文本剪切板管理器�
 
 GitHub 自动生成的“Source code”压缩包只包含源码，不包含可直接运行的 EXE。
 
+## 界面预览
+
+以下图片均截取自 ClipNest 的真实运行界面，内容使用公开演示文本。
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/clipnest-manager.png" width="340" alt="ClipNest 管理器真实界面"></td>
+    <td align="center"><img src="docs/images/clipnest-settings.png" width="340" alt="ClipNest 设置面板真实界面"></td>
+  </tr>
+  <tr>
+    <td align="center">管理器：收藏、活动记录与文本预览</td>
+    <td align="center">设置面板：快捷键、透明度与启动行为</td>
+  </tr>
+</table>
+
+### 快捷面板
+
+![ClipNest 三列快捷面板真实界面](docs/images/clipnest-quick-panel.png)
+
 ## 主要功能
 
 - 默认使用 `Ctrl + Alt + V` 呼出快速选择窗口；面板优先出现在鼠标右侧，空间不足时自动切换到左侧
