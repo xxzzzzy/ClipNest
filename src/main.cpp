@@ -46,7 +46,6 @@ constexpr UINT kTrayId = 1;
 constexpr UINT kSearchId = 100;
 constexpr UINT_PTR kPasteTimer = 10;
 constexpr UINT_PTR kStatusTimer = 11;
-constexpr UINT_PTR kAnimationTimer = 12;
 constexpr UINT_PTR kClipboardRetryTimer = 13;
 constexpr UINT_PTR kMemoryTrimTimer = 14;
 constexpr UINT_PTR kPanelFlipTimer = 15;
@@ -218,12 +217,10 @@ bool g_flipAnimating{};
 bool g_flipTargetSettings{};
 ULONGLONG g_panelFlipStarted{};
 bool g_popupSplitHistory{};
+int g_popupRows{1};
 std::wstring g_searchText;
 std::wstring g_statusText;
 std::wstring g_settingsStatus;
-RECT g_popupFinalRect{};
-POINT g_popupAnimationOrigin{};
-ULONGLONG g_animationStarted{};
 int g_clipboardRetries{};
 HICON g_trayIcon{};
 HFONT g_editFont{};
@@ -522,8 +519,7 @@ PopupLayout GetPopupLayout(HWND window) {
     PopupLayout layout;
     layout.width = static_cast<float>(client.right) / scale;
     layout.height = static_cast<float>(client.bottom) / scale;
-    layout.rows = std::max(
-        1, static_cast<int>((layout.height - layout.headerHeight - 8.0f) / layout.rowHeight));
+    layout.rows = std::max(1, g_popupRows);
     layout.splitHistory = g_popupSplitHistory;
     layout.favoriteWidth = layout.width * (layout.splitHistory ? 0.30f : 0.36f);
     layout.firstHistoryWidth = layout.splitHistory ? layout.width * 0.36f
@@ -1002,7 +998,6 @@ void HideInfo() {
 }
 
 void HideQuickPanel() {
-    KillTimer(g_popup, kAnimationTimer);
     ShowWindow(g_popup, SW_HIDE);
     g_popupSurface.Reset();
     SetTimer(g_manager, kMemoryTrimTimer, 1800, nullptr);
@@ -1034,6 +1029,7 @@ void ShowQuickPanel() {
     const int height = std::min(MulDiv(668, dpi, 96), workHeight - 24);
     const int heightDip = MulDiv(height, 96, dpi);
     const int targetRows = std::max(1, (heightDip - 29 - 8) / 21);
+    g_popupRows = targetRows;
     g_popupSplitHistory = g_store.History().size() > static_cast<std::size_t>(targetRows);
     const int targetWidthDip = g_popupSplitHistory ? 920 : 680;
     const int width = std::min(MulDiv(targetWidthDip, dpi, 96), workWidth - 24);
@@ -1046,50 +1042,10 @@ void ShowQuickPanel() {
     int top = cursor.y - MulDiv(20, dpi, 96);
     top = std::clamp(top, static_cast<int>(monitor.rcWork.top) + edge,
                      static_cast<int>(monitor.rcWork.bottom) - edge - height);
-    g_popupFinalRect = {left, top, left + width, top + height};
-    g_popupAnimationOrigin = {
-        opensRight ? left : left + width,
-        std::clamp(static_cast<int>(cursor.y), top, top + height)};
-
-    constexpr float startScale = 0.98f;
-    const int startLeft = static_cast<int>(g_popupAnimationOrigin.x +
-        (g_popupFinalRect.left - g_popupAnimationOrigin.x) * startScale);
-    const int startTop = static_cast<int>(g_popupAnimationOrigin.y +
-        (g_popupFinalRect.top - g_popupAnimationOrigin.y) * startScale);
-    const int startRight = static_cast<int>(g_popupAnimationOrigin.x +
-        (g_popupFinalRect.right - g_popupAnimationOrigin.x) * startScale);
-    const int startBottom = static_cast<int>(g_popupAnimationOrigin.y +
-        (g_popupFinalRect.bottom - g_popupAnimationOrigin.y) * startScale);
-    SetWindowPos(g_popup, HWND_TOPMOST, startLeft, startTop,
-                 startRight - startLeft, startBottom - startTop,
-                 SWP_SHOWWINDOW);
+    SetWindowPos(g_popup, HWND_TOPMOST, left, top, width, height, SWP_SHOWWINDOW);
     SetForegroundWindow(g_popup);
     SetFocus(g_popup);
-    g_animationStarted = GetTickCount64();
-    SetTimer(g_popup, kAnimationTimer, 16, nullptr);
     InvalidateRect(g_popup, nullptr, FALSE);
-}
-
-void AnimateQuickPanel() {
-    constexpr float durationMs = 170.0f;
-    const float elapsed = static_cast<float>(GetTickCount64() - g_animationStarted);
-    const float t = std::clamp(elapsed / durationMs, 0.0f, 1.0f);
-    constexpr float omega = 7.0f;
-    const float raw = 1.0f - (1.0f + omega * t) * std::exp(-omega * t);
-    const float normalizer = 1.0f - (1.0f + omega) * std::exp(-omega);
-    const float progress = raw / normalizer;
-    const float scale = 0.98f + 0.02f * progress;
-    const int left = static_cast<int>(g_popupAnimationOrigin.x +
-        (g_popupFinalRect.left - g_popupAnimationOrigin.x) * scale);
-    const int top = static_cast<int>(g_popupAnimationOrigin.y +
-        (g_popupFinalRect.top - g_popupAnimationOrigin.y) * scale);
-    const int right = static_cast<int>(g_popupAnimationOrigin.x +
-        (g_popupFinalRect.right - g_popupAnimationOrigin.x) * scale);
-    const int bottom = static_cast<int>(g_popupAnimationOrigin.y +
-        (g_popupFinalRect.bottom - g_popupAnimationOrigin.y) * scale);
-    SetWindowPos(g_popup, HWND_TOPMOST, left, top, right - left, bottom - top,
-                 SWP_NOACTIVATE | SWP_NOOWNERZORDER);
-    if (t >= 1.0f) KillTimer(g_popup, kAnimationTimer);
 }
 
 void SendPaste() {
@@ -2633,9 +2589,6 @@ LRESULT CALLBACK PopupProc(HWND window, UINT message, WPARAM wParam, LPARAM lPar
         InvalidateRect(window, nullptr, FALSE);
         return 0;
     }
-    case WM_TIMER:
-        if (wParam == kAnimationTimer) AnimateQuickPanel();
-        return 0;
     case WM_ACTIVATE:
         if (LOWORD(wParam) == WA_INACTIVE && g_popupPressedSection < 0 && IsWindowVisible(window)) {
             HideQuickPanel();
