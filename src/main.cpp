@@ -199,6 +199,7 @@ std::size_t g_selectedIndex{};
 int g_popupSection{1};
 std::size_t g_popupIndex{};
 std::size_t g_favoriteScroll{};
+std::size_t g_popupHistoryPage{};
 std::size_t g_managerFavoriteScroll{};
 std::size_t g_managerHistoryScroll{};
 UINT g_managerPressedCommand{};
@@ -1018,6 +1019,7 @@ void ShowQuickPanel() {
     g_popupHoverSection = -1;
     g_popupPressedSection = -1;
     g_favoriteScroll = 0;
+    g_popupHistoryPage = 0;
 
     POINT cursor{};
     GetCursorPos(&cursor);
@@ -1086,6 +1088,36 @@ std::wstring KeyLabel(std::size_t index) {
     if (index == 9) return L"0";
     if (index < 36) return std::wstring(1, static_cast<wchar_t>(L'A' + index - 10));
     return {};
+}
+
+std::size_t PopupHistoryCapacity(const PopupLayout& layout) {
+    const int columns = layout.splitHistory ? 2 : 1;
+    return static_cast<std::size_t>(std::max(1, layout.rows * columns));
+}
+
+std::size_t PopupHistoryPageCount(const PopupLayout& layout) {
+    const std::size_t count = g_store.History().size();
+    const std::size_t capacity = PopupHistoryCapacity(layout);
+    return count == 0 ? 1 : (count + capacity - 1) / capacity;
+}
+
+std::size_t PopupHistoryPageStart(const PopupLayout& layout) {
+    const std::size_t pageCount = PopupHistoryPageCount(layout);
+    const std::size_t page = std::min(g_popupHistoryPage, pageCount - 1);
+    return page * PopupHistoryCapacity(layout);
+}
+
+void SetPopupHistoryPage(const PopupLayout& layout, std::size_t page) {
+    g_popupHistoryPage = std::min(page, PopupHistoryPageCount(layout) - 1);
+}
+
+void EnsurePopupHistorySelectionVisible(const PopupLayout& layout) {
+    if (g_store.History().empty()) {
+        g_popupHistoryPage = 0;
+        return;
+    }
+    g_popupIndex = std::min(g_popupIndex, g_store.History().size() - 1);
+    SetPopupHistoryPage(layout, g_popupIndex / PopupHistoryCapacity(layout));
 }
 
 void DrawManager(HWND window) {
@@ -1292,6 +1324,11 @@ void DrawPopup(HWND window) {
     if (!EnsureSurface(window, g_popupSurface)) return;
     const Theme theme = CurrentTheme();
     const PopupLayout layout = GetPopupLayout(window);
+    const auto& history = g_store.History();
+    const std::size_t historyCapacity = PopupHistoryCapacity(layout);
+    const std::size_t historyPageCount = PopupHistoryPageCount(layout);
+    const std::size_t historyStart = PopupHistoryPageStart(layout);
+    const std::size_t historyEnd = std::min(history.size(), historyStart + historyCapacity);
     auto& surface = g_popupSurface;
     surface.target->BeginDraw();
     surface.target->Clear(theme.background);
@@ -1302,9 +1339,18 @@ void DrawPopup(HWND window) {
                   D2D1::RectF(layout.favoriteWidth + 16, 5,
                                layout.favoriteWidth + layout.firstHistoryWidth - 12, 27), theme.text);
     if (layout.splitHistory) {
+        const float earlierLeft = layout.favoriteWidth + layout.firstHistoryWidth;
         DrawTextValue(surface, L"较早记录", g_headerFormat,
-                      D2D1::RectF(layout.favoriteWidth + layout.firstHistoryWidth + 16, 5,
-                                  layout.width - 12, 27), theme.text);
+                       D2D1::RectF(earlierLeft + 16, 5, earlierLeft + 106, 27), theme.text);
+        if (historyPageCount > 1) {
+            const std::wstring range = std::to_wstring(historyStart + 1) + L"–" +
+                                       std::to_wstring(historyEnd) + L" / " +
+                                       std::to_wstring(history.size());
+            g_smallFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+            DrawTextValue(surface, range, g_smallFormat,
+                          D2D1::RectF(earlierLeft + 106, 6, layout.width - 12, 27), theme.muted);
+            g_smallFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        }
     }
     DrawLine(surface, D2D1::Point2F(0, layout.headerHeight - 0.5f),
              D2D1::Point2F(layout.width, layout.headerHeight - 0.5f), theme.divider);
@@ -1331,13 +1377,10 @@ void DrawPopup(HWND window) {
                       selected ? theme.selectedText : theme.text);
     }
 
-    const auto& history = g_store.History();
-    const int historyColumns = layout.splitHistory ? 2 : 1;
-    const std::size_t maximum = std::min(
-        history.size(), static_cast<std::size_t>(layout.rows * historyColumns));
-    for (std::size_t index = 0; index < maximum; ++index) {
-        const int column = static_cast<int>(index / layout.rows);
-        const int row = static_cast<int>(index % layout.rows);
+    for (std::size_t displayed = 0; historyStart + displayed < historyEnd; ++displayed) {
+        const std::size_t index = historyStart + displayed;
+        const int column = static_cast<int>(displayed / layout.rows);
+        const int row = static_cast<int>(displayed % layout.rows);
         const float left = layout.favoriteWidth +
                            (column == 0 ? 0.0f : layout.firstHistoryWidth);
         const float columnWidth = column == 0 ? layout.firstHistoryWidth : layout.secondHistoryWidth;
@@ -1347,7 +1390,7 @@ void DrawPopup(HWND window) {
         const bool selected = g_popupSection == 1 && g_popupIndex == index;
         const bool hover = g_popupHoverSection == 1 && g_popupHoverIndex == index;
         if (selected || hover) FillRoundRect(surface, rectangle, 5, selected ? theme.selected : theme.hover);
-        const std::wstring key = KeyLabel(index);
+        const std::wstring key = KeyLabel(displayed);
         if (!key.empty()) {
             DrawTextValue(surface, key, g_smallFormat,
                            D2D1::RectF(rectangle.left + 7, rectangle.top + 2,
@@ -1588,7 +1631,8 @@ std::pair<int, std::size_t> PopupHitTest(HWND window, D2D1_POINT_2F point) {
         return index < g_store.Favorites().size() ? std::pair{0, index} : std::pair{-1, std::size_t{0}};
     }
     const int column = point.x < layout.favoriteWidth + layout.firstHistoryWidth ? 0 : 1;
-    const std::size_t index = static_cast<std::size_t>(column * layout.rows + row);
+    const std::size_t displayed = static_cast<std::size_t>(column * layout.rows + row);
+    const std::size_t index = PopupHistoryPageStart(layout) + displayed;
     return index < g_store.History().size() ? std::pair{1, index} : std::pair{-1, std::size_t{0}};
 }
 
@@ -2494,22 +2538,41 @@ LRESULT CALLBACK PopupProc(HWND window, UINT message, WPARAM wParam, LPARAM lPar
         g_popupPressedSection = -1;
         return 0;
     }
-    case WM_MOUSEWHEEL:
-        if (!g_store.Favorites().empty()) {
-            const PopupLayout layout = GetPopupLayout(window);
-            POINT screen{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-            ScreenToClient(window, &screen);
-            if (static_cast<float>(screen.x) / DpiScale(window) < layout.favoriteWidth) {
-                const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
-                if (delta < 0 && g_favoriteScroll + layout.rows < g_store.Favorites().size()) {
-                    ++g_favoriteScroll;
-                } else if (delta > 0 && g_favoriteScroll > 0) {
-                    --g_favoriteScroll;
-                }
-                InvalidateRect(window, nullptr, FALSE);
+    case WM_MOUSEWHEEL: {
+        const PopupLayout layout = GetPopupLayout(window);
+        POINT screen{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        ScreenToClient(window, &screen);
+        const float x = static_cast<float>(screen.x) / DpiScale(window);
+        const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+        bool changed = false;
+        if (x < layout.favoriteWidth && !g_store.Favorites().empty()) {
+            if (delta < 0 && g_favoriteScroll + layout.rows < g_store.Favorites().size()) {
+                ++g_favoriteScroll;
+                changed = true;
+            } else if (delta > 0 && g_favoriteScroll > 0) {
+                --g_favoriteScroll;
+                changed = true;
+            }
+        } else if (x >= layout.favoriteWidth && !g_store.History().empty()) {
+            const std::size_t pageCount = PopupHistoryPageCount(layout);
+            const std::size_t oldPage = std::min(g_popupHistoryPage, pageCount - 1);
+            if (delta < 0 && oldPage + 1 < pageCount) {
+                SetPopupHistoryPage(layout, oldPage + 1);
+                changed = true;
+            } else if (delta > 0 && oldPage > 0) {
+                SetPopupHistoryPage(layout, oldPage - 1);
+                changed = true;
+            }
+            if (changed) {
+                g_popupSection = 1;
+                g_popupIndex = PopupHistoryPageStart(layout);
+                g_popupHoverSection = -1;
+                g_popupPressedSection = -1;
             }
         }
+        if (changed) InvalidateRect(window, nullptr, FALSE);
         return 0;
+    }
     case WM_SYSKEYDOWN:
     case WM_KEYDOWN: {
         if (wParam == VK_ESCAPE) {
@@ -2517,44 +2580,59 @@ LRESULT CALLBACK PopupProc(HWND window, UINT message, WPARAM wParam, LPARAM lPar
             return 0;
         }
         const PopupLayout layout = GetPopupLayout(window);
-        if (wParam >= '1' && wParam <= '9') {
-            const std::size_t index = static_cast<std::size_t>(wParam - '1');
-            if (index < g_store.History().size()) {
+        const std::size_t historyStart = PopupHistoryPageStart(layout);
+        const std::size_t historyEnd = std::min(
+            g_store.History().size(), historyStart + PopupHistoryCapacity(layout));
+        const auto useHistoryShortcut = [&](std::size_t displayed) {
+            const std::size_t index = historyStart + displayed;
+            if (index < historyEnd) {
                 UseEntry(1, index, true);
             } else {
                 HideQuickPanel();
             }
+        };
+        if (wParam >= '1' && wParam <= '9') {
+            useHistoryShortcut(static_cast<std::size_t>(wParam - '1'));
             return 0;
         }
         if (wParam == '0') {
-            if (g_store.History().size() > 9) {
-                UseEntry(1, 9, true);
-            } else {
-                HideQuickPanel();
-            }
+            useHistoryShortcut(9);
             return 0;
         }
         if (wParam >= 'A' && wParam <= 'Z') {
-            const std::size_t index = 10 + static_cast<std::size_t>(wParam - 'A');
-            if (index < g_store.History().size()) {
-                UseEntry(1, index, true);
-            } else {
-                HideQuickPanel();
-            }
+            useHistoryShortcut(10 + static_cast<std::size_t>(wParam - 'A'));
             return 0;
         }
         const auto& entries = g_popupSection == 0 ? g_store.Favorites() : g_store.History();
         if (wParam == VK_TAB) {
             g_popupSection = g_popupSection == 0 ? 1 : 0;
             const auto& target = g_popupSection == 0 ? g_store.Favorites() : g_store.History();
-            g_popupIndex = target.empty() ? 0 : std::min(g_popupIndex, target.size() - 1);
+            g_popupIndex = target.empty() ? 0 : (g_popupSection == 1
+                ? historyStart : std::min(g_popupIndex, target.size() - 1));
         } else if (wParam == VK_UP && !entries.empty()) {
             g_popupIndex = g_popupIndex == 0 ? entries.size() - 1 : g_popupIndex - 1;
         } else if (wParam == VK_DOWN && !entries.empty()) {
             g_popupIndex = (g_popupIndex + 1) % entries.size();
+        } else if ((wParam == VK_PRIOR || wParam == VK_NEXT) && !g_store.History().empty()) {
+            const std::size_t capacity = PopupHistoryCapacity(layout);
+            const std::size_t pageCount = PopupHistoryPageCount(layout);
+            const std::size_t oldPage = historyStart / capacity;
+            const std::size_t relative = g_popupSection == 1 && g_popupIndex >= historyStart &&
+                                         g_popupIndex < historyEnd
+                ? g_popupIndex - historyStart : 0;
+            std::size_t newPage = oldPage;
+            if (wParam == VK_PRIOR && newPage > 0) --newPage;
+            if (wParam == VK_NEXT && newPage + 1 < pageCount) ++newPage;
+            SetPopupHistoryPage(layout, newPage);
+            g_popupSection = 1;
+            g_popupIndex = std::min(
+                PopupHistoryPageStart(layout) + relative, g_store.History().size() - 1);
         } else if (wParam == VK_LEFT) {
+            const std::size_t displayed = g_popupIndex >= historyStart
+                ? g_popupIndex - historyStart : PopupHistoryCapacity(layout);
             if (layout.splitHistory && g_popupSection == 1 &&
-                g_popupIndex >= static_cast<std::size_t>(layout.rows)) {
+                displayed >= static_cast<std::size_t>(layout.rows) &&
+                displayed < PopupHistoryCapacity(layout)) {
                 g_popupIndex -= static_cast<std::size_t>(layout.rows);
             } else if (!g_store.Favorites().empty()) {
                 g_popupSection = 0;
@@ -2563,10 +2641,13 @@ LRESULT CALLBACK PopupProc(HWND window, UINT message, WPARAM wParam, LPARAM lPar
         } else if (wParam == VK_RIGHT) {
             if (g_popupSection == 0 && !g_store.History().empty()) {
                 g_popupSection = 1;
-                g_popupIndex = 0;
-            } else if (layout.splitHistory && g_popupSection == 1 &&
-                       g_popupIndex + static_cast<std::size_t>(layout.rows) < g_store.History().size()) {
-                g_popupIndex += static_cast<std::size_t>(layout.rows);
+                g_popupIndex = historyStart;
+            } else if (layout.splitHistory && g_popupSection == 1) {
+                const std::size_t displayed = g_popupIndex >= historyStart
+                    ? g_popupIndex - historyStart : PopupHistoryCapacity(layout);
+                if (displayed + static_cast<std::size_t>(layout.rows) < historyEnd - historyStart) {
+                    g_popupIndex += static_cast<std::size_t>(layout.rows);
+                }
             }
         } else if (wParam == VK_RETURN) {
             if (!entries.empty()) {
@@ -2586,6 +2667,7 @@ LRESULT CALLBACK PopupProc(HWND window, UINT message, WPARAM wParam, LPARAM lPar
         if (g_popupSection == 0 && g_popupIndex >= g_favoriteScroll + layout.rows) {
             g_favoriteScroll = g_popupIndex - static_cast<std::size_t>(layout.rows) + 1;
         }
+        if (g_popupSection == 1) EnsurePopupHistorySelectionVisible(layout);
         InvalidateRect(window, nullptr, FALSE);
         return 0;
     }
